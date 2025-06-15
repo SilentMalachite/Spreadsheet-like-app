@@ -1,6 +1,6 @@
-# 🧮 プロ表計算ソフト - React+Electron版
+# 🧮 簡易表計算アプリ - React+Electron版
 
-React + Electronで構築された、本格的なExcelライクなデスクトップスプレッドシートアプリケーションです。ローカル環境で動作し、直感的な操作性と高度な数式計算機能を提供します。
+React + Electronで構築された、本格的なExcelライクなデスクトップスプレッドシートアプリケーションです。「プロ」とはいっていますが簡便なもの。ローカル環境で動作し、直感的な操作性と高度な数式計算機能を提供します。
 
 ![プロ表計算ソフト](https://img.shields.io/badge/React-18+-61DAFB?style=for-the-badge&logo=react)
 ![Electron](https://img.shields.io/badge/Electron-Latest-47848F?style=for-the-badge&logo=electron)
