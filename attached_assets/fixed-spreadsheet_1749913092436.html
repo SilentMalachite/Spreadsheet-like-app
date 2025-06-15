@@ -1,0 +1,2954 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>プロ表計算ソフト - IndexedDB版</title>
+    <style>
+        /* CSS変数による定数定義 */
+        :root {
+            --primary-color: #667eea;
+            --primary-hover: #5a6fd8;
+            --secondary-color: #764ba2;
+            --border-color: #ddd;
+            --header-bg-start: #f8f9fa;
+            --header-bg-end: #e9ecef;
+            --text-dark: #495057;
+            --bg-light: #f5f5f5;
+            --cell-selected: #e3f2fd;
+            --cell-selected-border: #2196f3;
+            --cell-editing-border: #4caf50;
+            --cell-formula-bg: #fff3e0;
+            --cell-error-bg: #ffebee;
+            --cell-error-text: #d32f2f;
+            --success-color: #4caf50;
+            --error-color: #f44336;
+            --warning-color: #ff9800;
+            
+            /* サイズ定数 */
+            --cell-height: 30px;
+            --cell-min-width: 100px;
+            --row-header-width: 50px;
+            --animation-duration: 0.3s;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-light);
+            overflow: hidden;
+        }
+
+        /* ヘッダーエリア */
+        .header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            color: white;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 300;
+        }
+
+        /* ツールバー */
+        .toolbar {
+            background: white;
+            padding: 10px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            flex-wrap: wrap;
+        }
+
+        .toolbar-group {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .toolbar-separator {
+            border-left: 1px solid var(--border-color);
+            margin: 0 10px;
+            height: 25px;
+        }
+
+        .btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all var(--animation-duration) ease;
+            white-space: nowrap;
+        }
+
+        .btn:hover:not(:disabled) {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn.secondary {
+            background: #6c757d;
+        }
+
+        .btn.secondary:hover:not(:disabled) {
+            background: #5a6268;
+        }
+
+        /* 数式バー */
+        .formula-bar {
+            background: white;
+            padding: 10px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .cell-ref {
+            background: var(--header-bg-start);
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            min-width: 80px;
+            font-weight: bold;
+            color: var(--text-dark);
+        }
+
+        .formula-input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* スプレッドシートコンテナ */
+        .spreadsheet-container {
+            height: calc(100vh - 180px);
+            overflow: auto;
+            background: white;
+            border: 1px solid var(--border-color);
+            position: relative;
+        }
+
+        .spreadsheet {
+            display: table;
+            border-collapse: separate;
+            border-spacing: 0;
+            min-width: 100%;
+        }
+
+        .row {
+            display: table-row;
+        }
+
+        .cell, .header-cell {
+            display: table-cell;
+            border: 1px solid #e0e0e0;
+            padding: 0;
+            position: relative;
+            min-width: var(--cell-min-width);
+            height: var(--cell-height);
+            vertical-align: middle;
+        }
+
+        .header-cell {
+            background: linear-gradient(to bottom, var(--header-bg-start), var(--header-bg-end));
+            font-weight: bold;
+            text-align: center;
+            color: var(--text-dark);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .header-cell:hover {
+            background: linear-gradient(to bottom, var(--header-bg-end), var(--header-bg-start));
+        }
+
+        .row-header {
+            background: linear-gradient(to right, var(--header-bg-start), var(--header-bg-end));
+            font-weight: bold;
+            text-align: center;
+            color: var(--text-dark);
+            min-width: var(--row-header-width);
+            max-width: var(--row-header-width);
+            position: sticky;
+            left: 0;
+            z-index: 5;
+        }
+
+        /* セル内の要素の高さ調整 */
+        .cell {
+            cursor: cell;
+            background: white;
+            position: relative;
+        }
+
+        .cell .cell-content {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 5px 8px;
+            display: flex;
+            align-items: center;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .cell input {
+            width: 100%;
+            height: 100%;
+            border: none;
+            outline: none;
+            padding: 5px 8px;
+            font-size: 14px;
+            background: transparent;
+            font-family: inherit;
+            display: none;
+        }
+
+        .cell.editing input {
+            display: block;
+        }
+
+        .cell.editing .cell-content {
+            display: none;
+        }
+
+        .cell.selected {
+            background: var(--cell-selected);
+            border: 2px solid var(--cell-selected-border);
+        }
+
+        .cell.selecting {
+            background: rgba(33, 150, 243, 0.1);
+            border: 1px dashed var(--cell-selected-border);
+        }
+
+        .cell.editing {
+            background: white;
+            border: 2px solid var(--cell-editing-border);
+        }
+
+        .cell.formula .cell-content {
+            background: var(--cell-formula-bg);
+        }
+
+        .cell.error .cell-content {
+            background: var(--cell-error-bg);
+            color: var(--cell-error-text);
+        }
+
+        /* コンテキストメニュー */
+        .context-menu {
+            position: absolute;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            display: none;
+            min-width: 200px;
+        }
+
+        .context-menu-item {
+            padding: 12px 16px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background-color 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .context-menu-item:hover {
+            background: #f5f5f5;
+        }
+
+        .context-menu-item:last-child {
+            border-bottom: none;
+        }
+
+        .context-menu-item.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .context-menu-item.disabled:hover {
+            background: transparent;
+        }
+
+        .context-menu-separator {
+            height: 1px;
+            background: var(--border-color);
+            margin: 5px 0;
+        }
+
+        /* ステータスバー */
+        .status-bar {
+            background: var(--header-bg-start);
+            padding: 8px 15px;
+            border-top: 1px solid var(--border-color);
+            font-size: 12px;
+            color: #6c757d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-info {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .edit-mode-indicator {
+            background: var(--cell-editing-border);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        /* 通知 */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--success-color);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 2000;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all var(--animation-duration) ease;
+            max-width: 300px;
+        }
+
+        .notification.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .notification.error {
+            background: var(--error-color);
+        }
+
+        .notification.warning {
+            background: var(--warning-color);
+        }
+
+        /* ローディング */
+        .loading {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            color: #007bff;
+        }
+
+        .loading::before {
+            content: '';
+            width: 12px;
+            height: 12px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* ダイアログ */
+        .dialog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .dialog {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            padding: 20px;
+            min-width: 300px;
+            max-width: 500px;
+        }
+
+        .dialog-header {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+
+        .dialog-content {
+            margin-bottom: 20px;
+        }
+
+        .dialog-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        /* フォーマットパネル */
+        .format-panel {
+            position: absolute;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1001;
+            display: none;
+            padding: 15px;
+            min-width: 250px;
+        }
+
+        .format-group {
+            margin-bottom: 15px;
+        }
+
+        .format-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .color-picker {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .color-option {
+            width: 30px;
+            height: 30px;
+            border: 2px solid transparent;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .color-option:hover {
+            border-color: var(--primary-color);
+            transform: scale(1.1);
+        }
+
+        .color-option.selected {
+            border-color: var(--primary-color);
+        }
+
+        /* アクセシビリティ */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0,0,0,0);
+            white-space: nowrap;
+            border-width: 0;
+        }
+
+        /* フォーカス可視化 */
+        :focus-visible {
+            outline: 2px solid var(--primary-color);
+            outline-offset: 2px;
+        }
+
+        /* レスポンシブ */
+        @media (max-width: 768px) {
+            .toolbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .toolbar-separator {
+                display: none;
+            }
+            
+            .formula-bar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+
+        /* ヘルプダイアログ */
+        .help-dialog {
+            max-width: 600px;
+        }
+
+        .help-section {
+            margin-bottom: 20px;
+        }
+
+        .help-section h3 {
+            margin-bottom: 10px;
+            color: var(--primary-color);
+        }
+
+        .shortcut-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .shortcut-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .shortcut-key {
+            background: #f0f0f0;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        /* IndexedDB同期インジケーター */
+        .sync-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            margin-left: 10px;
+        }
+
+        .sync-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ccc;
+        }
+
+        .sync-status.synced {
+            background: var(--success-color);
+        }
+
+        .sync-status.syncing {
+            background: var(--warning-color);
+            animation: pulse 1s infinite;
+        }
+
+        .sync-status.error {
+            background: var(--error-color);
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧮 プロ表計算ソフト - IndexedDB版</h1>
+    </div>
+
+    <div class="toolbar" role="toolbar" aria-label="スプレッドシートツールバー">
+        <div class="toolbar-group">
+            <button class="btn" id="undoBtn" aria-label="元に戻す" title="元に戻す (Ctrl+Z)">↶ 元に戻す</button>
+            <button class="btn" id="redoBtn" aria-label="やり直す" title="やり直す (Ctrl+Y)">↷ やり直す</button>
+        </div>
+        
+        <div class="toolbar-separator"></div>
+        
+        <div class="toolbar-group">
+            <button class="btn" id="copyBtn" aria-label="コピー" title="コピー (Ctrl+C)">📋 コピー</button>
+            <button class="btn" id="cutBtn" aria-label="切り取り" title="切り取り (Ctrl+X)">✂️ 切り取り</button>
+            <button class="btn" id="pasteBtn" aria-label="貼り付け" title="貼り付け (Ctrl+V)">📌 貼り付け</button>
+        </div>
+        
+        <div class="toolbar-separator"></div>
+        
+        <div class="toolbar-group">
+            <button class="btn" id="addRowBtn" aria-label="行を追加">行追加</button>
+            <button class="btn" id="addColumnBtn" aria-label="列を追加">列追加</button>
+            <button class="btn" id="deleteRowBtn" aria-label="行を削除">行削除</button>
+            <button class="btn" id="deleteColumnBtn" aria-label="列を削除">列削除</button>
+        </div>
+        
+        <div class="toolbar-separator"></div>
+        
+        <div class="toolbar-group">
+            <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display: none;" aria-label="ファイルを選択">
+            <button class="btn" id="loadFileBtn" aria-label="ファイルを読み込む">📁 ファイル読込</button>
+            <button class="btn" id="saveExcelBtn" aria-label="Excelとして保存">💾 Excel保存</button>
+            <button class="btn" id="saveCSVBtn" aria-label="CSVとして保存">📄 CSV保存</button>
+        </div>
+        
+        <div class="toolbar-separator"></div>
+        
+        <div class="toolbar-group">
+            <button class="btn" id="formatBtn" aria-label="書式設定">🎨 書式</button>
+            <button class="btn secondary" id="clearFormatsBtn" aria-label="書式をクリア">書式クリア</button>
+            <button class="btn secondary" id="helpBtn" aria-label="ヘルプ" title="ヘルプ (F1)">❓ ヘルプ</button>
+        </div>
+    </div>
+
+    <div class="formula-bar" role="region" aria-label="数式バー">
+        <div class="cell-ref" id="cellRef" aria-live="polite" aria-label="選択中のセル">A1</div>
+        <input type="text" class="formula-input" id="formulaInput" 
+               placeholder="数式を入力 (例: =A1+B1, =SUM(A1:A5), =AVERAGE(B1:B10))"
+               aria-label="数式入力欄">
+    </div>
+
+    <div class="spreadsheet-container" role="grid" aria-label="スプレッドシート">
+        <div class="spreadsheet" id="spreadsheet">
+            <!-- スプレッドシートがここに生成されます -->
+        </div>
+    </div>
+
+    <div class="status-bar" role="status" aria-live="polite">
+        <div class="status-info">
+            <div id="selectionInfo">A1 選択中</div>
+            <div id="editModeInfo"></div>
+            <div id="calculationInfo"></div>
+            <div id="fileInfo"></div>
+        </div>
+        <div id="autoSaveInfo">
+            自動保存: オフ
+            <span class="sync-indicator">
+                <span class="sync-status" id="syncStatus"></span>
+            </span>
+        </div>
+    </div>
+
+    <!-- コンテキストメニュー -->
+    <div class="context-menu" id="contextMenu" role="menu" aria-label="セル操作メニュー">
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="cut">
+            ✂️ 切り取り
+        </div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="copy">
+            📋 コピー
+        </div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="paste">
+            📌 貼り付け
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="insertRowAbove">
+            ↑ 上に行を挿入
+        </div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="insertRowBelow">
+            ↓ 下に行を挿入
+        </div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="insertColumnLeft">
+            ← 左に列を挿入
+        </div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="insertColumnRight">
+            → 右に列を挿入
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="deleteRow">
+            行を削除
+        </div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="deleteColumn">
+            列を削除
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="clearContents">
+            内容をクリア
+        </div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="clearFormats">
+            書式をクリア
+        </div>
+        <div class="context-menu-item" role="menuitem" tabindex="-1" data-action="clearAll">
+            すべてクリア
+        </div>
+    </div>
+
+    <!-- 書式設定パネル -->
+    <div class="format-panel" id="formatPanel">
+        <h3>書式設定</h3>
+        <div class="format-group">
+            <label>文字色</label>
+            <div class="color-picker" id="textColorPicker">
+                <div class="color-option" style="background: #000000" data-color="#000000"></div>
+                <div class="color-option" style="background: #ff0000" data-color="#ff0000"></div>
+                <div class="color-option" style="background: #00ff00" data-color="#00ff00"></div>
+                <div class="color-option" style="background: #0000ff" data-color="#0000ff"></div>
+                <div class="color-option" style="background: #ffff00" data-color="#ffff00"></div>
+                <div class="color-option" style="background: #ff00ff" data-color="#ff00ff"></div>
+                <div class="color-option" style="background: #00ffff" data-color="#00ffff"></div>
+                <div class="color-option" style="background: #ffffff; border: 1px solid #ccc" data-color="#ffffff"></div>
+            </div>
+        </div>
+        <div class="format-group">
+            <label>背景色</label>
+            <div class="color-picker" id="bgColorPicker">
+                <div class="color-option" style="background: transparent; border: 1px solid #ccc" data-color="transparent">✕</div>
+                <div class="color-option" style="background: #ffcccc" data-color="#ffcccc"></div>
+                <div class="color-option" style="background: #ccffcc" data-color="#ccffcc"></div>
+                <div class="color-option" style="background: #ccccff" data-color="#ccccff"></div>
+                <div class="color-option" style="background: #ffffcc" data-color="#ffffcc"></div>
+                <div class="color-option" style="background: #ffccff" data-color="#ffccff"></div>
+                <div class="color-option" style="background: #ccffff" data-color="#ccffff"></div>
+                <div class="color-option" style="background: #f0f0f0" data-color="#f0f0f0"></div>
+            </div>
+        </div>
+        <div class="format-group">
+            <label>
+                <input type="checkbox" id="boldCheck"> 太字
+            </label>
+            <label>
+                <input type="checkbox" id="italicCheck"> 斜体
+            </label>
+        </div>
+        <div class="dialog-footer">
+            <button class="btn secondary" id="cancelFormatBtn">キャンセル</button>
+            <button class="btn" id="applyFormatBtn">適用</button>
+        </div>
+    </div>
+
+    <!-- ダイアログ -->
+    <div class="dialog-overlay" id="dialogOverlay">
+        <div class="dialog" role="dialog" aria-modal="true">
+            <div class="dialog-header" id="dialogTitle"></div>
+            <div class="dialog-content" id="dialogContent"></div>
+            <div class="dialog-footer" id="dialogFooter"></div>
+        </div>
+    </div>
+
+    <!-- ヘルプダイアログ -->
+    <div class="dialog-overlay" id="helpDialogOverlay">
+        <div class="dialog help-dialog" role="dialog" aria-modal="true">
+            <div class="dialog-header">キーボードショートカット</div>
+            <div class="dialog-content">
+                <div class="help-section">
+                    <h3>ナビゲーション</h3>
+                    <ul class="shortcut-list">
+                        <li class="shortcut-item">
+                            <span>セル間を移動</span>
+                            <span><span class="shortcut-key">↑↓←→</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>編集モードに入る</span>
+                            <span><span class="shortcut-key">F2</span> / <span class="shortcut-key">ダブルクリック</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>編集を確定して下へ移動</span>
+                            <span><span class="shortcut-key">Enter</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>編集を確定して上へ移動</span>
+                            <span><span class="shortcut-key">Shift + Enter</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>編集を確定して右へ移動</span>
+                            <span><span class="shortcut-key">Tab</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>編集を確定して左へ移動</span>
+                            <span><span class="shortcut-key">Shift + Tab</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>編集をキャンセル</span>
+                            <span><span class="shortcut-key">Esc</span></span>
+                        </li>
+                    </ul>
+                </div>
+                <div class="help-section">
+                    <h3>編集</h3>
+                    <ul class="shortcut-list">
+                        <li class="shortcut-item">
+                            <span>元に戻す</span>
+                            <span><span class="shortcut-key">Ctrl + Z</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>やり直す</span>
+                            <span><span class="shortcut-key">Ctrl + Y</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>コピー</span>
+                            <span><span class="shortcut-key">Ctrl + C</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>切り取り</span>
+                            <span><span class="shortcut-key">Ctrl + X</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>貼り付け</span>
+                            <span><span class="shortcut-key">Ctrl + V</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>削除</span>
+                            <span><span class="shortcut-key">Delete</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>すべて選択</span>
+                            <span><span class="shortcut-key">Ctrl + A</span></span>
+                        </li>
+                    </ul>
+                </div>
+                <div class="help-section">
+                    <h3>ファイル操作</h3>
+                    <ul class="shortcut-list">
+                        <li class="shortcut-item">
+                            <span>ファイルを開く</span>
+                            <span><span class="shortcut-key">Ctrl + O</span></span>
+                        </li>
+                        <li class="shortcut-item">
+                            <span>保存</span>
+                            <span><span class="shortcut-key">Ctrl + S</span></span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <button class="btn" id="closeHelpBtn">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通知 -->
+    <div class="notification" id="notification" role="alert" aria-live="assertive"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script>
+        // スプレッドシートアプリケーションモジュール
+        const SpreadsheetApp = (function() {
+            'use strict';
+
+            // 定数定義
+            const CONSTANTS = {
+                DEFAULT_ROWS: 100,
+                DEFAULT_COLS: 100,
+                MAX_ROWS: 1000,
+                MAX_COLS: 100,
+                MIN_ROWS: 1,
+                MIN_COLS: 1,
+                NOTIFICATION_DURATION: 3000,
+                AUTOSAVE_INTERVAL: 30000,
+                COLUMN_WIDTH: 100,
+                ROW_HEIGHT: 30,
+                MAX_UNDO_STACK: 50,
+                DEBOUNCE_DELAY: 300,
+                ALPHABET_SIZE: 26,
+                ASCII_A: 65,
+                DB_NAME: 'SpreadsheetDB',
+                DB_VERSION: 1,
+                STORE_NAME: 'spreadsheets',
+                DEFAULT_SHEET_ID: 'default'
+            };
+
+            // IndexedDBマネージャー
+            class IndexedDBManager {
+                constructor() {
+                    this.db = null;
+                    this.isReady = false;
+                    this.isAvailable = this.checkAvailability();
+                    this.memoryStorage = null; // メモリストレージのフォールバック
+                }
+
+                checkAvailability() {
+                    try {
+                        // IndexedDBが利用可能かチェック
+                        return 'indexedDB' in window && indexedDB !== null;
+                    } catch (e) {
+                        return false;
+                    }
+                }
+
+                async init() {
+                    if (!this.isAvailable) {
+                        console.warn('IndexedDBが利用できません。メモリストレージを使用します。');
+                        this.isReady = true;
+                        this.memoryStorage = {};
+                        return Promise.resolve();
+                    }
+
+                    return new Promise((resolve, reject) => {
+                        try {
+                            const request = indexedDB.open(CONSTANTS.DB_NAME, CONSTANTS.DB_VERSION);
+                            
+                            request.onerror = () => {
+                                console.error('IndexedDB接続エラー:', request.error);
+                                // エラーが発生してもメモリストレージで継続
+                                this.isReady = true;
+                                this.memoryStorage = {};
+                                resolve();
+                            };
+                            
+                            request.onsuccess = () => {
+                                this.db = request.result;
+                                this.isReady = true;
+                                console.log('IndexedDB接続成功');
+                                resolve();
+                            };
+                            
+                            request.onupgradeneeded = (event) => {
+                                const db = event.target.result;
+                                
+                                if (!db.objectStoreNames.contains(CONSTANTS.STORE_NAME)) {
+                                    const store = db.createObjectStore(CONSTANTS.STORE_NAME, { keyPath: 'id' });
+                                    store.createIndex('lastModified', 'lastModified', { unique: false });
+                                    console.log('オブジェクトストア作成完了');
+                                }
+                            };
+                        } catch (error) {
+                            console.error('IndexedDB初期化エラー:', error);
+                            // エラーが発生してもメモリストレージで継続
+                            this.isReady = true;
+                            this.memoryStorage = {};
+                            resolve();
+                        }
+                    });
+                }
+
+                async save(data) {
+                    if (!this.isReady) {
+                        throw new Error('ストレージが初期化されていません');
+                    }
+
+                    // メモリストレージを使用
+                    if (this.memoryStorage !== null) {
+                        this.memoryStorage[CONSTANTS.DEFAULT_SHEET_ID] = {
+                            id: CONSTANTS.DEFAULT_SHEET_ID,
+                            cellData: Array.from(data.cellData.entries()),
+                            cellFormats: Array.from(data.cellFormats.entries()),
+                            rows: data.rows,
+                            cols: data.cols,
+                            lastModified: new Date().toISOString()
+                        };
+                        return Promise.resolve();
+                    }
+
+                    // IndexedDBを使用
+                    return new Promise((resolve, reject) => {
+                        const transaction = this.db.transaction([CONSTANTS.STORE_NAME], 'readwrite');
+                        const store = transaction.objectStore(CONSTANTS.STORE_NAME);
+                        
+                        const saveData = {
+                            id: CONSTANTS.DEFAULT_SHEET_ID,
+                            cellData: Array.from(data.cellData.entries()),
+                            cellFormats: Array.from(data.cellFormats.entries()),
+                            rows: data.rows,
+                            cols: data.cols,
+                            lastModified: new Date().toISOString()
+                        };
+                        
+                        const request = store.put(saveData);
+                        
+                        request.onsuccess = () => {
+                            console.log('データ保存成功');
+                            resolve();
+                        };
+                        
+                        request.onerror = () => {
+                            console.error('データ保存エラー:', request.error);
+                            reject(request.error);
+                        };
+                    });
+                }
+
+                async load() {
+                    if (!this.isReady) {
+                        throw new Error('ストレージが初期化されていません');
+                    }
+
+                    // メモリストレージを使用
+                    if (this.memoryStorage !== null) {
+                        const data = this.memoryStorage[CONSTANTS.DEFAULT_SHEET_ID];
+                        if (data) {
+                            return {
+                                cellData: new Map(data.cellData),
+                                cellFormats: new Map(data.cellFormats),
+                                rows: data.rows,
+                                cols: data.cols
+                            };
+                        }
+                        return null;
+                    }
+
+                    // IndexedDBを使用
+                    return new Promise((resolve, reject) => {
+                        const transaction = this.db.transaction([CONSTANTS.STORE_NAME], 'readonly');
+                        const store = transaction.objectStore(CONSTANTS.STORE_NAME);
+                        const request = store.get(CONSTANTS.DEFAULT_SHEET_ID);
+                        
+                        request.onsuccess = () => {
+                            const data = request.result;
+                            if (data) {
+                                console.log('データ読み込み成功');
+                                resolve({
+                                    cellData: new Map(data.cellData),
+                                    cellFormats: new Map(data.cellFormats),
+                                    rows: data.rows,
+                                    cols: data.cols
+                                });
+                            } else {
+                                console.log('保存されたデータなし');
+                                resolve(null);
+                            }
+                        };
+                        
+                        request.onerror = () => {
+                            console.error('データ読み込みエラー:', request.error);
+                            reject(request.error);
+                        };
+                    });
+                }
+
+                async delete() {
+                    if (!this.isReady) {
+                        throw new Error('IndexedDBが初期化されていません');
+                    }
+
+                    return new Promise((resolve, reject) => {
+                        const transaction = this.db.transaction([CONSTANTS.STORE_NAME], 'readwrite');
+                        const store = transaction.objectStore(CONSTANTS.STORE_NAME);
+                        const request = store.delete(CONSTANTS.DEFAULT_SHEET_ID);
+                        
+                        request.onsuccess = () => {
+                            console.log('データ削除成功');
+                            resolve();
+                        };
+                        
+                        request.onerror = () => {
+                            console.error('データ削除エラー:', request.error);
+                            reject(request.error);
+                        };
+                    });
+                }
+
+                close() {
+                    if (this.db) {
+                        this.db.close();
+                        this.db = null;
+                        this.isReady = false;
+                    }
+                }
+            }
+
+            // アプリケーションの状態管理
+            class AppState {
+                constructor() {
+                    this.rows = CONSTANTS.DEFAULT_ROWS;
+                    this.cols = CONSTANTS.DEFAULT_COLS;
+                    this.currentCell = null;
+                    this.selectedCells = new Set();
+                    this.isSelecting = false;
+                    this.selectionStart = null;
+                    this.cellData = new Map();
+                    this.cellFormats = new Map();
+                    this.clipboard = null;
+                    this.undoStack = [];
+                    this.redoStack = [];
+                    this.dependencies = new Map();
+                    this.currentFileName = null;
+                    this.isDirty = false;
+                    this.isEditingCell = false;
+                    this.editingCellCoords = null;
+                }
+
+                getCellKey(row, col) {
+                    return `${row}-${col}`;
+                }
+
+                getCellValue(row, col) {
+                    return this.cellData.get(this.getCellKey(row, col)) || '';
+                }
+
+                setCellValue(row, col, value) {
+                    const key = this.getCellKey(row, col);
+                    if (value === '' || value === null || value === undefined) {
+                        this.cellData.delete(key);
+                    } else {
+                        this.cellData.set(key, value);
+                    }
+                    this.isDirty = true;
+                }
+
+                getCellFormat(row, col) {
+                    return this.cellFormats.get(this.getCellKey(row, col)) || {};
+                }
+
+                setCellFormat(row, col, format) {
+                    const key = this.getCellKey(row, col);
+                    if (Object.keys(format).length === 0) {
+                        this.cellFormats.delete(key);
+                    } else {
+                        this.cellFormats.set(key, format);
+                    }
+                    this.isDirty = true;
+                }
+
+                createSnapshot() {
+                    return {
+                        cellData: new Map(this.cellData),
+                        cellFormats: new Map(this.cellFormats),
+                        rows: this.rows,
+                        cols: this.cols
+                    };
+                }
+
+                restoreSnapshot(snapshot) {
+                    this.cellData = new Map(snapshot.cellData);
+                    this.cellFormats = new Map(snapshot.cellFormats);
+                    this.rows = snapshot.rows;
+                    this.cols = snapshot.cols;
+                    this.isDirty = true;
+                }
+            }
+
+            // 数式パーサーと評価エンジン
+            class FormulaEngine {
+                constructor(state) {
+                    this.state = state;
+                    this.functions = {
+                        SUM: this.sum.bind(this),
+                        AVERAGE: this.average.bind(this),
+                        MIN: this.min.bind(this),
+                        MAX: this.max.bind(this),
+                        COUNT: this.count.bind(this),
+                        IF: this.if.bind(this),
+                        CONCATENATE: this.concatenate.bind(this)
+                    };
+                }
+
+                evaluate(formula, currentRow, currentCol) {
+                    try {
+                        const visitedCells = new Set();
+                        visitedCells.add(this.state.getCellKey(currentRow, currentCol));
+                        return this.parseFormula(formula, visitedCells);
+                    } catch (error) {
+                        return '#ERROR: ' + error.message;
+                    }
+                }
+
+                parseFormula(formula, visitedCells) {
+                    // 修正点2: 関数を先に処理してから、セル参照を置換
+                    formula = this.processFunctions(formula, visitedCells);
+                    formula = this.replaceCellReferences(formula, visitedCells);
+                    return this.safeEvaluate(formula);
+                }
+
+                replaceCellReferences(formula, visitedCells) {
+                    // 修正点2: 範囲指定（A1:B2）はスキップし、単独のセル参照のみを置換
+                    return formula.replace(/(?<![:\w])([A-Z]+)(\d+)(?!:)/g, (match, col, row) => {
+                        const colIndex = this.columnNameToIndex(col);
+                        const rowIndex = parseInt(row) - 1;
+                        
+                        const cellKey = this.state.getCellKey(rowIndex, colIndex);
+                        if (visitedCells.has(cellKey)) {
+                            throw new Error('循環参照が検出されました');
+                        }
+                        
+                        const value = this.state.getCellValue(rowIndex, colIndex);
+                        
+                        if (typeof value === 'string' && value.startsWith('=')) {
+                            visitedCells.add(cellKey);
+                            const result = this.parseFormula(value.substring(1), new Set(visitedCells));
+                            visitedCells.delete(cellKey);
+                            return result;
+                        }
+                        
+                        return isNaN(parseFloat(value)) ? '0' : parseFloat(value);
+                    });
+                }
+
+                processFunctions(formula, visitedCells) {
+                    const functionPattern = /([A-Z]+)\(([^)]+)\)/g;
+                    
+                    return formula.replace(functionPattern, (match, funcName, args) => {
+                        if (this.functions[funcName]) {
+                            return this.functions[funcName](args, visitedCells);
+                        }
+                        throw new Error(`未知の関数: ${funcName}`);
+                    });
+                }
+
+                safeEvaluate(expression) {
+                    const allowedChars = /^[\d\s+\-*/().,]+$/;
+                    if (!allowedChars.test(expression)) {
+                        throw new Error('無効な文字が含まれています');
+                    }
+                    
+                    try {
+                        return this.parseExpression(expression);
+                    } catch (error) {
+                        throw new Error('数式の評価に失敗しました');
+                    }
+                }
+
+                parseExpression(expr) {
+                    expr = expr.replace(/\s/g, '');
+                    const tokens = expr.match(/[\d.]+|[+\-*/()]/g);
+                    if (!tokens) return 0;
+                    return this.evaluatePostfix(this.infixToPostfix(tokens));
+                }
+
+                infixToPostfix(tokens) {
+                    const output = [];
+                    const operators = [];
+                    const precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
+                    
+                    for (const token of tokens) {
+                        if (!isNaN(parseFloat(token))) {
+                            output.push(parseFloat(token));
+                        } else if (token === '(') {
+                            operators.push(token);
+                        } else if (token === ')') {
+                            while (operators.length && operators[operators.length - 1] !== '(') {
+                                output.push(operators.pop());
+                            }
+                            operators.pop();
+                        } else {
+                            while (operators.length && 
+                                   operators[operators.length - 1] !== '(' &&
+                                   precedence[operators[operators.length - 1]] >= precedence[token]) {
+                                output.push(operators.pop());
+                            }
+                            operators.push(token);
+                        }
+                    }
+                    
+                    while (operators.length) {
+                        output.push(operators.pop());
+                    }
+                    
+                    return output;
+                }
+
+                evaluatePostfix(tokens) {
+                    const stack = [];
+                    
+                    for (const token of tokens) {
+                        if (typeof token === 'number') {
+                            stack.push(token);
+                        } else {
+                            const b = stack.pop();
+                            const a = stack.pop();
+                            
+                            switch (token) {
+                                case '+': stack.push(a + b); break;
+                                case '-': stack.push(a - b); break;
+                                case '*': stack.push(a * b); break;
+                                case '/': 
+                                    if (b === 0) throw new Error('ゼロ除算');
+                                    stack.push(a / b); 
+                                    break;
+                            }
+                        }
+                    }
+                    
+                    return stack[0] || 0;
+                }
+
+                columnNameToIndex(name) {
+                    let result = 0;
+                    for (let i = 0; i < name.length; i++) {
+                        result = result * CONSTANTS.ALPHABET_SIZE + (name.charCodeAt(i) - CONSTANTS.ASCII_A + 1);
+                    }
+                    return result - 1;
+                }
+
+                parseRange(rangeStr) {
+                    const [start, end] = rangeStr.split(':');
+                    const startMatch = start.match(/([A-Z]+)(\d+)/);
+                    const endMatch = end.match(/([A-Z]+)(\d+)/);
+                    
+                    return {
+                        startRow: parseInt(startMatch[2]) - 1,
+                        startCol: this.columnNameToIndex(startMatch[1]),
+                        endRow: parseInt(endMatch[2]) - 1,
+                        endCol: this.columnNameToIndex(endMatch[1])
+                    };
+                }
+
+                sum(args, visitedCells) {
+                    if (args.includes(':')) {
+                        const range = this.parseRange(args);
+                        let sum = 0;
+                        
+                        for (let row = range.startRow; row <= range.endRow; row++) {
+                            for (let col = range.startCol; col <= range.endCol; col++) {
+                                const value = parseFloat(this.state.getCellValue(row, col) || 0);
+                                if (!isNaN(value)) sum += value;
+                            }
+                        }
+                        
+                        return sum;
+                    }
+                    
+                    const values = args.split(',').map(arg => {
+                        const processed = this.replaceCellReferences(arg.trim(), visitedCells);
+                        return parseFloat(processed) || 0;
+                    });
+                    
+                    return values.reduce((sum, val) => sum + val, 0);
+                }
+
+                average(args, visitedCells) {
+                    const sumResult = this.sum(args, visitedCells);
+                    let count = 0;
+                    
+                    if (args.includes(':')) {
+                        const range = this.parseRange(args);
+                        for (let row = range.startRow; row <= range.endRow; row++) {
+                            for (let col = range.startCol; col <= range.endCol; col++) {
+                                const value = this.state.getCellValue(row, col);
+                                if (value !== '' && !isNaN(parseFloat(value))) count++;
+                            }
+                        }
+                    } else {
+                        count = args.split(',').length;
+                    }
+                    
+                    return count > 0 ? sumResult / count : 0;
+                }
+
+                min(args, visitedCells) {
+                    const values = this.getValuesFromArgs(args, visitedCells);
+                    return values.length > 0 ? Math.min(...values) : 0;
+                }
+
+                max(args, visitedCells) {
+                    const values = this.getValuesFromArgs(args, visitedCells);
+                    return values.length > 0 ? Math.max(...values) : 0;
+                }
+
+                count(args, visitedCells) {
+                    const values = this.getValuesFromArgs(args, visitedCells);
+                    return values.length;
+                }
+
+                if(args, visitedCells) {
+                    const parts = args.split(',').map(p => p.trim());
+                    if (parts.length !== 3) {
+                        throw new Error('IF関数には3つの引数が必要です');
+                    }
+                    
+                    const condition = this.replaceCellReferences(parts[0], visitedCells);
+                    const conditionResult = this.safeEvaluate(condition);
+                    
+                    return conditionResult ? 
+                        this.replaceCellReferences(parts[1], visitedCells) : 
+                        this.replaceCellReferences(parts[2], visitedCells);
+                }
+
+                concatenate(args, visitedCells) {
+                    const parts = args.split(',').map(arg => {
+                        const processed = this.replaceCellReferences(arg.trim(), visitedCells);
+                        return processed.toString();
+                    });
+                    
+                    return parts.join('');
+                }
+
+                getValuesFromArgs(args, visitedCells) {
+                    const values = [];
+                    
+                    if (args.includes(':')) {
+                        const range = this.parseRange(args);
+                        for (let row = range.startRow; row <= range.endRow; row++) {
+                            for (let col = range.startCol; col <= range.endCol; col++) {
+                                const value = parseFloat(this.state.getCellValue(row, col));
+                                if (!isNaN(value)) values.push(value);
+                            }
+                        }
+                    } else {
+                        args.split(',').forEach(arg => {
+                            const processed = this.replaceCellReferences(arg.trim(), visitedCells);
+                            const value = parseFloat(processed);
+                            if (!isNaN(value)) values.push(value);
+                        });
+                    }
+                    
+                    return values;
+                }
+            }
+
+            // UIマネージャー
+            class UIManager {
+                constructor(state, formulaEngine, dbManager) {
+                    this.state = state;
+                    this.formulaEngine = formulaEngine;
+                    this.dbManager = dbManager;
+                    this.elements = this.cacheElements();
+                    this.setupEventListeners();
+                    this.rangeSelectInfo = { selecting: false, startRow: null, startCol: null, inputElement: null, prefix: '', suffix: '' };
+                    
+                    // 自動保存タイマー
+                    this.autoSaveInterval = setInterval(() => {
+                        this.saveToIndexedDB();
+                    }, CONSTANTS.AUTOSAVE_INTERVAL);
+
+                    // 起動時のIndexedDB復元
+                    this.loadFromIndexedDB();
+                }
+
+                cacheElements() {
+                    return {
+                        spreadsheet: document.getElementById('spreadsheet'),
+                        cellRef: document.getElementById('cellRef'),
+                        formulaInput: document.getElementById('formulaInput'),
+                        contextMenu: document.getElementById('contextMenu'),
+                        notification: document.getElementById('notification'),
+                        selectionInfo: document.getElementById('selectionInfo'),
+                        editModeInfo: document.getElementById('editModeInfo'),
+                        fileInfo: document.getElementById('fileInfo'),
+                        formatPanel: document.getElementById('formatPanel'),
+                        dialogOverlay: document.getElementById('dialogOverlay'),
+                        helpDialogOverlay: document.getElementById('helpDialogOverlay'),
+                        undoBtn: document.getElementById('undoBtn'),
+                        redoBtn: document.getElementById('redoBtn'),
+                        copyBtn: document.getElementById('copyBtn'),
+                        cutBtn: document.getElementById('cutBtn'),
+                        pasteBtn: document.getElementById('pasteBtn'),
+                        addRowBtn: document.getElementById('addRowBtn'),
+                        addColumnBtn: document.getElementById('addColumnBtn'),
+                        deleteRowBtn: document.getElementById('deleteRowBtn'),
+                        deleteColumnBtn: document.getElementById('deleteColumnBtn'),
+                        loadFileBtn: document.getElementById('loadFileBtn'),
+                        saveExcelBtn: document.getElementById('saveExcelBtn'),
+                        saveCSVBtn: document.getElementById('saveCSVBtn'),
+                        formatBtn: document.getElementById('formatBtn'),
+                        clearFormatsBtn: document.getElementById('clearFormatsBtn'),
+                        helpBtn: document.getElementById('helpBtn'),
+                        fileInput: document.getElementById('fileInput'),
+                        closeHelpBtn: document.getElementById('closeHelpBtn'),
+                        autoSaveInfo: document.getElementById('autoSaveInfo'),
+                        syncStatus: document.getElementById('syncStatus')
+                    };
+                }
+
+                setupEventListeners() {
+                    this.elements.undoBtn.addEventListener('click', () => this.undo());
+                    this.elements.redoBtn.addEventListener('click', () => this.redo());
+                    this.elements.copyBtn.addEventListener('click', () => this.copy());
+                    this.elements.cutBtn.addEventListener('click', () => this.cut());
+                    this.elements.pasteBtn.addEventListener('click', () => this.paste());
+                    this.elements.addRowBtn.addEventListener('click', () => this.addRow());
+                    this.elements.addColumnBtn.addEventListener('click', () => this.addColumn());
+                    this.elements.deleteRowBtn.addEventListener('click', () => this.deleteRow());
+                    this.elements.deleteColumnBtn.addEventListener('click', () => this.deleteColumn());
+                    this.elements.loadFileBtn.addEventListener('click', () => this.elements.fileInput.click());
+                    this.elements.saveExcelBtn.addEventListener('click', () => this.saveAsExcel());
+                    this.elements.saveCSVBtn.addEventListener('click', () => this.saveAsCSV());
+                    this.elements.formatBtn.addEventListener('click', () => this.showFormatPanel());
+                    this.elements.clearFormatsBtn.addEventListener('click', () => this.clearFormats());
+                    this.elements.helpBtn.addEventListener('click', () => this.showHelp());
+                    this.elements.closeHelpBtn.addEventListener('click', () => this.hideHelp());
+                    this.elements.fileInput.addEventListener('change', (e) => this.loadFile(e));
+
+                    this.elements.formulaInput.addEventListener('input', (e) => this.handleFormulaInput(e));
+                    this.elements.formulaInput.addEventListener('keydown', (e) => this.handleFormulaKeydown(e));
+
+                    window.addEventListener('keydown', (e) => this.handleGlobalKeydown(e));
+                    document.addEventListener('contextmenu', (e) => e.preventDefault());
+                    document.addEventListener('click', () => this.hideContextMenu());
+
+                    this.setupFormatPanel();
+
+                    this.elements.helpDialogOverlay.addEventListener('click', (e) => {
+                        if (e.target === this.elements.helpDialogOverlay) {
+                            this.hideHelp();
+                        }
+                    });
+
+                    window.addEventListener('resize', debounce(() => this.adjustLayout(), CONSTANTS.DEBOUNCE_DELAY));
+                }
+
+                initSpreadsheet() {
+                    this.renderSpreadsheet();
+                    this.updateButtonStates();
+                }
+
+                renderSpreadsheet() {
+                    const fragment = document.createDocumentFragment();
+                    
+                    const headerRow = this.createHeaderRow();
+                    fragment.appendChild(headerRow);
+                    
+                    for (let row = 0; row < this.state.rows; row++) {
+                        const rowElement = this.createDataRow(row);
+                        fragment.appendChild(rowElement);
+                    }
+                    
+                    this.elements.spreadsheet.innerHTML = '';
+                    this.elements.spreadsheet.appendChild(fragment);
+                }
+
+                createHeaderRow() {
+                    const row = document.createElement('div');
+                    row.className = 'row';
+                    
+                    const corner = document.createElement('div');
+                    corner.className = 'header-cell row-header';
+                    corner.addEventListener('click', () => this.selectAll());
+                    row.appendChild(corner);
+                    
+                    for (let col = 0; col < this.state.cols; col++) {
+                        const header = document.createElement('div');
+                        header.className = 'header-cell';
+                        header.textContent = this.getColumnName(col);
+                        header.dataset.col = col;
+                        header.addEventListener('click', () => this.selectColumn(col));
+                        row.appendChild(header);
+                    }
+                    
+                    return row;
+                }
+
+                createDataRow(rowIndex) {
+                    const row = document.createElement('div');
+                    row.className = 'row';
+                    
+                    const rowHeader = document.createElement('div');
+                    rowHeader.className = 'header-cell row-header';
+                    rowHeader.textContent = rowIndex + 1;
+                    rowHeader.dataset.row = rowIndex;
+                    rowHeader.addEventListener('click', () => this.selectRow(rowIndex));
+                    row.appendChild(rowHeader);
+                    
+                    for (let col = 0; col < this.state.cols; col++) {
+                        const cell = this.createCell(rowIndex, col);
+                        row.appendChild(cell);
+                    }
+                    
+                    return row;
+                }
+
+                createCell(row, col) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.dataset.row = row;
+                    cell.dataset.col = col;
+                    cell.setAttribute('role', 'gridcell');
+                    cell.setAttribute('tabindex', '-1');
+                    
+                    const content = document.createElement('div');
+                    content.className = 'cell-content';
+                    
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.setAttribute('aria-label', `セル ${this.getColumnName(col)}${row + 1}`);
+                    
+                    const value = this.state.getCellValue(row, col);
+                    const format = this.state.getCellFormat(row, col);
+                    
+                    if (value) {
+                        input.value = value;
+                        if (typeof value === 'string' && value.startsWith('=')) {
+                            const result = this.formulaEngine.evaluate(value.substring(1), row, col);
+                            content.textContent = result;
+                            cell.classList.add('formula');
+                            if (typeof result === 'string' && result.startsWith('#ERROR')) {
+                                cell.classList.add('error');
+                            }
+                        } else {
+                            content.textContent = value;
+                        }
+                    }
+                    
+                    this.applyCellFormat(cell, content, format);
+                    
+                    cell.addEventListener('click', (e) => {
+                        if (!this.state.isEditingCell) {
+                            this.selectCell(row, col);
+                        }
+                    });
+                    
+                    cell.addEventListener('dblclick', () => {
+                        this.enterEditMode(row, col);
+                    });
+                    
+                    input.addEventListener('blur', () => this.handleCellBlur(row, col));
+                    input.addEventListener('keydown', (e) => this.handleCellInputKeydown(e, row, col));
+                    
+                    cell.addEventListener('mousedown', (e) => this.handleCellMouseDown(e, row, col));
+                    cell.addEventListener('mouseenter', () => this.handleCellMouseEnter(row, col));
+                    cell.addEventListener('mouseup', () => this.handleCellMouseUp());
+                    cell.addEventListener('contextmenu', (e) => this.showContextMenu(e, row, col));
+                    
+                    cell.appendChild(content);
+                    cell.appendChild(input);
+                    return cell;
+                }
+
+                getColumnName(index) {
+                    let result = '';
+                    while (index >= 0) {
+                        result = String.fromCharCode(CONSTANTS.ASCII_A + (index % CONSTANTS.ALPHABET_SIZE)) + result;
+                        index = Math.floor(index / CONSTANTS.ALPHABET_SIZE) - 1;
+                    }
+                    return result;
+                }
+
+                selectCell(row, col, extend = false) {
+                    if (!extend) {
+                        this.clearSelection();
+                        this.state.selectedCells.clear();
+                    }
+                    
+                    const cellKey = this.state.getCellKey(row, col);
+                    this.state.selectedCells.add(cellKey);
+                    this.state.currentCell = { row, col };
+                    
+                    const cell = this.getCellElement(row, col);
+                    if (cell) {
+                        cell.classList.add('selected');
+                        cell.setAttribute('tabindex', '0');
+                        cell.focus();
+                    }
+                    
+                    this.updateCellReference(row, col);
+                    this.updateFormulaBar(row, col);
+                    this.updateSelectionInfo();
+                    
+                    // 修正点1: セル移動時にフォーミュラバーとの同期を確保
+                    if (!this.state.isEditingCell) {
+                        this.updateFormulaBar(row, col);
+                    }
+                }
+
+                enterEditMode(row, col) {
+                    if (this.state.isEditingCell) {
+                        this.exitEditMode(true);
+                    }
+                    
+                    const cell = this.getCellElement(row, col);
+                    if (!cell) return;
+                    
+                    const input = cell.querySelector('input');
+                    if (!input) return;
+                    
+                    this.state.isEditingCell = true;
+                    this.state.editingCellCoords = { row, col };
+                    
+                    cell.classList.add('editing');
+                    input.style.display = 'block';
+                    
+                    // 修正点1: フォーミュラバーの値を編集中のセルと同期
+                    const cellValue = this.state.getCellValue(row, col);
+                    this.elements.formulaInput.value = cellValue;
+                    input.value = cellValue;
+                    
+                    input.focus();
+                    input.select();
+                    
+                    this.updateEditModeIndicator();
+                }
+
+                exitEditMode(save = true) {
+                    if (!this.state.isEditingCell) return;
+                    
+                    const { row, col } = this.state.editingCellCoords;
+                    const cell = this.getCellElement(row, col);
+                    if (!cell) return;
+                    
+                    const input = cell.querySelector('input');
+                    const content = cell.querySelector('.cell-content');
+                    
+                    if (!input || !content) return;
+                    
+                    if (save) {
+                        const newValue = input.value;
+                        const oldValue = this.state.getCellValue(row, col);
+                        
+                        if (newValue !== oldValue) {
+                            this.saveState();
+                            this.state.setCellValue(row, col, newValue);
+                            
+                            if (newValue.startsWith('=')) {
+                                const result = this.formulaEngine.evaluate(newValue.substring(1), row, col);
+                                content.textContent = result;
+                                cell.classList.add('formula');
+                                if (typeof result === 'string' && result.startsWith('#ERROR')) {
+                                    cell.classList.add('error');
+                                } else {
+                                    cell.classList.remove('error');
+                                }
+                            } else {
+                                content.textContent = newValue;
+                                cell.classList.remove('formula', 'error');
+                            }
+                            
+                            this.elements.formulaInput.value = newValue;
+                        }
+                    } else {
+                        input.value = this.state.getCellValue(row, col);
+                    }
+                    
+                    cell.classList.remove('editing');
+                    input.style.display = 'none';
+                    this.state.isEditingCell = false;
+                    this.state.editingCellCoords = null;
+                    
+                    this.updateEditModeIndicator();
+                    cell.focus();
+                }
+
+                updateEditModeIndicator() {
+                    const indicator = this.elements.editModeInfo;
+                    if (this.state.isEditingCell) {
+                        indicator.innerHTML = '<span class="edit-mode-indicator">編集中</span>';
+                    } else {
+                        indicator.innerHTML = '';
+                    }
+                }
+
+                selectRange(startRow, startCol, endRow, endCol) {
+                    this.clearSelection();
+                    this.state.selectedCells.clear();
+                    
+                    const minRow = Math.min(startRow, endRow);
+                    const maxRow = Math.max(startRow, endRow);
+                    const minCol = Math.min(startCol, endCol);
+                    const maxCol = Math.max(startCol, endCol);
+                    
+                    for (let row = minRow; row <= maxRow; row++) {
+                        for (let col = minCol; col <= maxCol; col++) {
+                            const cellKey = this.state.getCellKey(row, col);
+                            this.state.selectedCells.add(cellKey);
+                            
+                            const cell = this.getCellElement(row, col);
+                            if (cell) {
+                                cell.classList.add('selected');
+                            }
+                        }
+                    }
+                    
+                    this.updateSelectionInfo();
+                }
+
+                clearSelection() {
+                    document.querySelectorAll('.cell.selected, .cell.selecting').forEach(cell => {
+                        cell.classList.remove('selected', 'selecting');
+                        cell.setAttribute('tabindex', '-1');
+                    });
+                }
+
+                handleCellBlur(row, col) {
+                    setTimeout(() => {
+                        if (this.state.isEditingCell && 
+                            this.state.editingCellCoords?.row === row && 
+                            this.state.editingCellCoords?.col === col) {
+                            const activeElement = document.activeElement;
+                            if (!activeElement || !activeElement.closest('.cell')) {
+                                this.exitEditMode(true);
+                            }
+                        }
+                    }, 100);
+                }
+
+                recalculateCell(row, col) {
+                    const value = this.state.getCellValue(row, col);
+                    const cell = this.getCellElement(row, col);
+                    if (!cell) return;
+                    
+                    const content = cell.querySelector('.cell-content');
+                    if (!content) return;
+                    
+                    if (typeof value === 'string' && value.startsWith('=')) {
+                        const result = this.formulaEngine.evaluate(value.substring(1), row, col);
+                        content.textContent = result;
+                        cell.classList.add('formula');
+                        
+                        if (typeof result === 'string' && result.startsWith('#ERROR')) {
+                            cell.classList.add('error');
+                        } else {
+                            cell.classList.remove('error');
+                        }
+                    } else {
+                        content.textContent = value;
+                        cell.classList.remove('formula', 'error');
+                    }
+                }
+
+                handleCellInputKeydown(e, row, col) {
+                    switch (e.key) {
+                        case 'Enter':
+                            e.preventDefault();
+                            this.exitEditMode(true);
+                            if (e.shiftKey && row > 0) {
+                                this.selectCell(row - 1, col);
+                            } else if (row < this.state.rows - 1) {
+                                this.selectCell(row + 1, col);
+                            }
+                            break;
+                        case 'Tab':
+                            e.preventDefault();
+                            this.exitEditMode(true);
+                            if (e.shiftKey && col > 0) {
+                                this.selectCell(row, col - 1);
+                            } else if (col < this.state.cols - 1) {
+                                this.selectCell(row, col + 1);
+                            }
+                            break;
+                        case 'Escape':
+                            e.preventDefault();
+                            this.exitEditMode(false);
+                            break;
+                    }
+                }
+
+                handleGlobalKeydown(e) {
+                    if (e.key === 'F1') {
+                        e.preventDefault();
+                        this.showHelp();
+                        return;
+                    }
+                    
+                    if (this.state.isEditingCell) {
+                        return;
+                    }
+                    
+                    if (e.ctrlKey || e.metaKey) {
+                        switch (e.key.toLowerCase()) {
+                            case 'z':
+                                e.preventDefault();
+                                this.undo();
+                                break;
+                            case 'y':
+                                e.preventDefault();
+                                this.redo();
+                                break;
+                            case 'c':
+                                e.preventDefault();
+                                this.copy();
+                                break;
+                            case 'x':
+                                e.preventDefault();
+                                this.cut();
+                                break;
+                            case 'v':
+                                e.preventDefault();
+                                this.paste();
+                                break;
+                            case 's':
+                                e.preventDefault();
+                                this.saveAsExcel();
+                                break;
+                            case 'o':
+                                e.preventDefault();
+                                this.elements.fileInput.click();
+                                break;
+                            case 'a':
+                                e.preventDefault();
+                                this.selectAll();
+                                break;
+                        }
+                        return;
+                    }
+                    
+                    if (!this.state.currentCell) return;
+                    const { row, col } = this.state.currentCell;
+                    
+                    switch (e.key) {
+                        case 'F2':
+                            e.preventDefault();
+                            this.enterEditMode(row, col);
+                            break;
+                        case 'ArrowUp':
+                            e.preventDefault();
+                            if (row > 0) {
+                                this.selectCell(row - 1, col, e.shiftKey);
+                            }
+                            break;
+                        case 'ArrowDown':
+                            e.preventDefault();
+                            if (row < this.state.rows - 1) {
+                                this.selectCell(row + 1, col, e.shiftKey);
+                            }
+                            break;
+                        case 'ArrowLeft':
+                            e.preventDefault();
+                            if (col > 0) {
+                                this.selectCell(row, col - 1, e.shiftKey);
+                            }
+                            break;
+                        case 'ArrowRight':
+                            e.preventDefault();
+                            if (col < this.state.cols - 1) {
+                                this.selectCell(row, col + 1, e.shiftKey);
+                            }
+                            break;
+                        case 'Backspace':
+                            e.preventDefault();
+                            this.deleteSelectedCells();
+                            break;
+                        case 'Delete':
+                            e.preventDefault();
+                            this.deleteSelectedCells();
+                            break;
+                        case 'Enter':
+                            e.preventDefault();
+                            this.enterEditMode(row, col);
+                            break;
+                        default:
+                            if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                                this.enterEditMode(row, col);
+                                const cell = this.getCellElement(row, col);
+                                if (cell) {
+                                    const input = cell.querySelector('input');
+                                    if (input) {
+                                        input.value = e.key;
+                                    }
+                                }
+                            }
+                            break;
+                    }
+                }
+
+                saveState() {
+                    const snapshot = this.state.createSnapshot();
+                    this.state.undoStack.push(snapshot);
+                    
+                    if (this.state.undoStack.length > CONSTANTS.MAX_UNDO_STACK) {
+                        this.state.undoStack.shift();
+                    }
+                    
+                    this.state.redoStack = [];
+                    this.updateButtonStates();
+                }
+
+                undo() {
+                    if (this.state.undoStack.length === 0) return;
+                    
+                    const currentSnapshot = this.state.createSnapshot();
+                    this.state.redoStack.push(currentSnapshot);
+                    
+                    const snapshot = this.state.undoStack.pop();
+                    this.state.restoreSnapshot(snapshot);
+                    
+                    this.renderSpreadsheet();
+                    this.updateButtonStates();
+                    this.showNotification('元に戻しました');
+                }
+
+                redo() {
+                    if (this.state.redoStack.length === 0) return;
+                    
+                    const currentSnapshot = this.state.createSnapshot();
+                    this.state.undoStack.push(currentSnapshot);
+                    
+                    const snapshot = this.state.redoStack.pop();
+                    this.state.restoreSnapshot(snapshot);
+                    
+                    this.renderSpreadsheet();
+                    this.updateButtonStates();
+                    this.showNotification('やり直しました');
+                }
+
+                copy() {
+                    if (this.state.selectedCells.size === 0) return;
+                    
+                    this.state.clipboard = {
+                        type: 'copy',
+                        cells: new Map()
+                    };
+                    
+                    for (const cellKey of this.state.selectedCells) {
+                        const [row, col] = cellKey.split('-').map(Number);
+                        this.state.clipboard.cells.set(cellKey, {
+                            value: this.state.getCellValue(row, col),
+                            format: this.state.getCellFormat(row, col)
+                        });
+                    }
+                    
+                    this.showNotification('コピーしました');
+                }
+
+                cut() {
+                    this.copy();
+                    if (this.state.clipboard) {
+                        this.state.clipboard.type = 'cut';
+                        this.showNotification('切り取りました');
+                    }
+                }
+
+                paste() {
+                    if (!this.state.clipboard || this.state.clipboard.cells.size === 0) {
+                        this.showNotification('貼り付けるデータがありません', 'warning');
+                        return;
+                    }
+                    
+                    this.saveState();
+                    
+                    const baseCell = this.state.currentCell || { row: 0, col: 0 };
+                    
+                    const clipboardKeys = Array.from(this.state.clipboard.cells.keys());
+                    const clipboardCoords = clipboardKeys.map(key => {
+                        const [row, col] = key.split('-').map(Number);
+                        return { row, col };
+                    });
+                    
+                    const minRow = Math.min(...clipboardCoords.map(c => c.row));
+                    const minCol = Math.min(...clipboardCoords.map(c => c.col));
+                    
+                    for (const [clipKey, cellData] of this.state.clipboard.cells) {
+                        const [clipRow, clipCol] = clipKey.split('-').map(Number);
+                        const offsetRow = clipRow - minRow;
+                        const offsetCol = clipCol - minCol;
+                        
+                        const targetRow = baseCell.row + offsetRow;
+                        const targetCol = baseCell.col + offsetCol;
+                        
+                        if (targetRow < this.state.rows && targetCol < this.state.cols) {
+                            this.state.setCellValue(targetRow, targetCol, cellData.value);
+                            this.state.setCellFormat(targetRow, targetCol, cellData.format);
+                            
+                            const cell = this.getCellElement(targetRow, targetCol);
+                            if (cell) {
+                                this.recalculateCell(targetRow, targetCol);
+                                this.applyCellFormat(cell, cell.querySelector('.cell-content'), cellData.format);
+                            }
+                        }
+                    }
+                    
+                    if (this.state.clipboard.type === 'cut') {
+                        for (const [clipKey] of this.state.clipboard.cells) {
+                            const [row, col] = clipKey.split('-').map(Number);
+                            this.state.setCellValue(row, col, '');
+                            this.state.setCellFormat(row, col, {});
+                            
+                            const cell = this.getCellElement(row, col);
+                            if (cell) {
+                                const content = cell.querySelector('.cell-content');
+                                const input = cell.querySelector('input');
+                                input.value = '';
+                                content.textContent = '';
+                                this.applyCellFormat(cell, content, {});
+                                cell.classList.remove('formula', 'error');
+                            }
+                        }
+                        
+                        this.state.clipboard = null;
+                    }
+                    
+                    this.showNotification('貼り付けました');
+                }
+
+                addRow() {
+                    if (this.state.rows >= CONSTANTS.MAX_ROWS) {
+                        this.showNotification('最大行数に達しています', 'warning');
+                        return;
+                    }
+                    
+                    this.saveState();
+                    this.state.rows++;
+                    this.renderSpreadsheet();
+                    this.showNotification('行を追加しました');
+                }
+
+                addColumn() {
+                    if (this.state.cols >= CONSTANTS.MAX_COLS) {
+                        this.showNotification('最大列数に達しています', 'warning');
+                        return;
+                    }
+                    
+                    this.saveState();
+                    this.state.cols++;
+                    this.renderSpreadsheet();
+                    this.showNotification('列を追加しました');
+                }
+
+                deleteRow() {
+                    if (this.state.rows <= CONSTANTS.MIN_ROWS) {
+                        this.showNotification('これ以上行を削除できません', 'warning');
+                        return;
+                    }
+                    
+                    this.saveState();
+                    
+                    const currentRow = this.state.currentCell ? this.state.currentCell.row : this.state.rows - 1;
+                    
+                    for (let row = currentRow; row < this.state.rows - 1; row++) {
+                        for (let col = 0; col < this.state.cols; col++) {
+                            const nextValue = this.state.getCellValue(row + 1, col);
+                            const nextFormat = this.state.getCellFormat(row + 1, col);
+                            this.state.setCellValue(row, col, nextValue);
+                            this.state.setCellFormat(row, col, nextFormat);
+                        }
+                    }
+                    
+                    for (let col = 0; col < this.state.cols; col++) {
+                        this.state.setCellValue(this.state.rows - 1, col, '');
+                        this.state.setCellFormat(this.state.rows - 1, col, {});
+                    }
+                    
+                    this.state.rows--;
+                    this.renderSpreadsheet();
+                    this.showNotification('行を削除しました');
+                }
+
+                deleteColumn() {
+                    if (this.state.cols <= CONSTANTS.MIN_COLS) {
+                        this.showNotification('これ以上列を削除できません', 'warning');
+                        return;
+                    }
+                    
+                    this.saveState();
+                    
+                    const currentCol = this.state.currentCell ? this.state.currentCell.col : this.state.cols - 1;
+                    
+                    for (let col = currentCol; col < this.state.cols - 1; col++) {
+                        for (let row = 0; row < this.state.rows; row++) {
+                            const nextValue = this.state.getCellValue(row, col + 1);
+                            const nextFormat = this.state.getCellFormat(row, col + 1);
+                            this.state.setCellValue(row, col, nextValue);
+                            this.state.setCellFormat(row, col, nextFormat);
+                        }
+                    }
+                    
+                    for (let row = 0; row < this.state.rows; row++) {
+                        this.state.setCellValue(row, this.state.cols - 1, '');
+                        this.state.setCellFormat(row, this.state.cols - 1, {});
+                    }
+                    
+                    this.state.cols--;
+                    this.renderSpreadsheet();
+                    this.showNotification('列を削除しました');
+                }
+
+                handleCellMouseDown(e, row, col) {
+                    const formulaFocused = document.activeElement === this.elements.formulaInput;
+                    const editingCell = this.state.isEditingCell ? this.getCellElement(this.state.editingCellCoords.row, this.state.editingCellCoords.col) : null;
+                    const editingInput = editingCell ? editingCell.querySelector('input') : null;
+                    const editingSameCell = this.state.isEditingCell && this.state.editingCellCoords.row === row && this.state.editingCellCoords.col === col;
+                    const inFormulaMode = formulaFocused || this.state.isEditingCell;
+                    if (inFormulaMode && !editingSameCell) {
+                        const inputEl = formulaFocused ? this.elements.formulaInput : editingInput;
+                        if (inputEl && inputEl.value.trim().startsWith('=')) {
+                            const selStart = inputEl.selectionStart ?? inputEl.value.length;
+                            const selEnd = inputEl.selectionEnd ?? inputEl.value.length;
+                            const prefix = inputEl.value.slice(0, selStart);
+                            const suffix = inputEl.value.slice(selEnd);
+                            this.rangeSelectInfo = { selecting: true, startRow: row, startCol: col, inputElement: inputEl, prefix, suffix };
+                            const ref = this.getColumnName(col) + (row + 1);
+                            inputEl.value = prefix + ref + suffix;
+                            inputEl.focus();
+                            inputEl.selectionStart = inputEl.selectionEnd = (prefix + ref).length;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            return;
+                        }
+                    }
+
+                    if (e.button !== 0) return;
+                    
+                    this.state.isSelecting = true;
+                    this.state.selectionStart = { row, col };
+                    
+                    if (!e.shiftKey && !e.ctrlKey) {
+                        this.selectCell(row, col);
+                    }
+                }
+
+                handleCellMouseEnter(row, col) {
+                    if (this.rangeSelectInfo.selecting) {
+                        const { startRow, startCol, inputElement, prefix, suffix } = this.rangeSelectInfo;
+                        const minRow = Math.min(startRow, row);
+                        const maxRow = Math.max(startRow, row);
+                        const minCol = Math.min(startCol, col);
+                        const maxCol = Math.max(startCol, col);
+                        const startRef = this.getColumnName(minCol) + (minRow + 1);
+                        const endRef = this.getColumnName(maxCol) + (maxRow + 1);
+                        const rangeRef = startRef + ':' + endRef;
+                        inputElement.value = prefix + rangeRef + suffix;
+                        return;
+                    }
+
+                    if (!this.state.isSelecting) return;
+                    
+                    const startRow = this.state.selectionStart.row;
+                    const startCol = this.state.selectionStart.col;
+                    
+                    this.selectRange(startRow, startCol, row, col);
+                }
+
+                handleCellMouseUp() {
+                    if (this.rangeSelectInfo.selecting) {
+                        this.rangeSelectInfo.selecting = false;
+                    }
+
+                    this.state.isSelecting = false;
+                }
+
+                showContextMenu(e, row, col) {
+                    e.preventDefault();
+                    
+                    if (!this.state.selectedCells.has(this.state.getCellKey(row, col))) {
+                        this.selectCell(row, col);
+                    }
+                    
+                    const menu = this.elements.contextMenu;
+                    menu.style.display = 'block';
+                    
+                    const x = Math.min(e.pageX, window.innerWidth - menu.offsetWidth - 10);
+                    const y = Math.min(e.pageY, window.innerHeight - menu.offsetHeight - 10);
+                    
+                    menu.style.left = x + 'px';
+                    menu.style.top = y + 'px';
+                    
+                    this.updateContextMenuItems();
+                }
+
+                hideContextMenu() {
+                    this.elements.contextMenu.style.display = 'none';
+                }
+
+                updateContextMenuItems() {
+                    const menu = this.elements.contextMenu;
+                    const items = menu.querySelectorAll('.context-menu-item');
+                    
+                    items.forEach(item => {
+                        const action = item.dataset.action;
+                        
+                        switch (action) {
+                            case 'paste':
+                                item.classList.toggle('disabled', !this.state.clipboard);
+                                break;
+                            case 'cut':
+                            case 'copy':
+                                item.classList.toggle('disabled', this.state.selectedCells.size === 0);
+                                break;
+                        }
+                    });
+                }
+
+                showFormatPanel() {
+                    if (this.state.selectedCells.size === 0) return;
+                    
+                    const panel = this.elements.formatPanel;
+                    const btn = this.elements.formatBtn;
+                    const rect = btn.getBoundingClientRect();
+                    
+                    panel.style.display = 'block';
+                    panel.style.left = rect.left + 'px';
+                    panel.style.top = rect.bottom + 5 + 'px';
+                    
+                    if (this.state.currentCell) {
+                        const format = this.state.getCellFormat(this.state.currentCell.row, this.state.currentCell.col);
+                        this.updateFormatPanelValues(format);
+                    }
+                }
+
+                setupFormatPanel() {
+                    const panel = this.elements.formatPanel;
+                    
+                    panel.querySelectorAll('.color-option').forEach(option => {
+                        option.addEventListener('click', (e) => {
+                            const picker = e.target.closest('.color-picker');
+                            picker.querySelectorAll('.color-option').forEach(opt => opt.classList.remove('selected'));
+                            e.target.classList.add('selected');
+                        });
+                    });
+                    
+                    document.getElementById('applyFormatBtn').addEventListener('click', () => this.applyFormat());
+                    document.getElementById('cancelFormatBtn').addEventListener('click', () => this.hideFormatPanel());
+                }
+
+                applyFormat() {
+                    this.saveState();
+                    
+                    const format = {
+                        color: document.querySelector('#textColorPicker .color-option.selected')?.dataset.color,
+                        backgroundColor: document.querySelector('#bgColorPicker .color-option.selected')?.dataset.color,
+                        fontWeight: document.getElementById('boldCheck').checked ? 'bold' : 'normal',
+                        fontStyle: document.getElementById('italicCheck').checked ? 'italic' : 'normal'
+                    };
+                    
+                    for (const cellKey of this.state.selectedCells) {
+                        const [row, col] = cellKey.split('-').map(Number);
+                        this.state.setCellFormat(row, col, format);
+                        
+                        const cell = this.getCellElement(row, col);
+                        if (cell) {
+                            const content = cell.querySelector('.cell-content');
+                            this.applyCellFormat(cell, content, format);
+                        }
+                    }
+                    
+                    this.hideFormatPanel();
+                    this.showNotification('書式を適用しました');
+                }
+
+                applyCellFormat(cell, content, format) {
+                    if (!cell || !content) return;
+                    
+                    const input = cell.querySelector('input');
+                    if (!input) return;
+                    
+                    if (format.color) {
+                        content.style.color = format.color;
+                        input.style.color = format.color;
+                    } else {
+                        content.style.color = '';
+                        input.style.color = '';
+                    }
+                    
+                    if (format.backgroundColor && format.backgroundColor !== 'transparent') {
+                        cell.style.backgroundColor = format.backgroundColor;
+                    } else {
+                        cell.style.backgroundColor = '';
+                    }
+                    
+                    content.style.fontWeight = format.fontWeight || 'normal';
+                    content.style.fontStyle = format.fontStyle || 'normal';
+                    input.style.fontWeight = format.fontWeight || 'normal';
+                    input.style.fontStyle = format.fontStyle || 'normal';
+                }
+
+                hideFormatPanel() {
+                    this.elements.formatPanel.style.display = 'none';
+                }
+
+                clearFormats() {
+                    if (this.state.selectedCells.size === 0) {
+                        this.showNotification('セルを選択してください', 'warning');
+                        return;
+                    }
+                    
+                    this.saveState();
+                    
+                    for (const cellKey of this.state.selectedCells) {
+                        const [row, col] = cellKey.split('-').map(Number);
+                        this.state.setCellFormat(row, col, {});
+                        
+                        const cell = this.getCellElement(row, col);
+                        if (cell) {
+                            const content = cell.querySelector('.cell-content');
+                            this.applyCellFormat(cell, content, {});
+                        }
+                    }
+                    
+                    this.showNotification('書式をクリアしました');
+                }
+
+                showHelp() {
+                    this.elements.helpDialogOverlay.style.display = 'flex';
+                }
+
+                hideHelp() {
+                    this.elements.helpDialogOverlay.style.display = 'none';
+                }
+
+                async loadFile(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    
+                    this.showNotification('ファイルを読み込んでいます...', 'info');
+                    
+                    try {
+                        const arrayBuffer = await file.arrayBuffer();
+                        
+                        if (file.name.endsWith('.csv')) {
+                            await this.loadCSV(arrayBuffer, file.name);
+                        } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                            await this.loadExcel(arrayBuffer, file.name);
+                        } else {
+                            throw new Error('サポートされていないファイル形式です');
+                        }
+                        
+                        this.state.currentFileName = file.name;
+                        this.updateFileInfo();
+                        this.showNotification(`${file.name} を読み込みました`);
+                        
+                    } catch (error) {
+                        console.error('ファイル読み込みエラー:', error);
+                        this.showNotification(`読み込みエラー: ${error.message}`, 'error');
+                    }
+                    
+                    event.target.value = '';
+                }
+
+                async loadExcel(arrayBuffer, filename) {
+                    const workbook = XLSX.read(arrayBuffer, {
+                        cellStyles: true,
+                        cellFormulas: true,
+                        cellDates: true
+                    });
+                    
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const range = XLSX.utils.decode_range(firstSheet['!ref'] || 'A1');
+                    
+                    this.state.cellData.clear();
+                    this.state.cellFormats.clear();
+                    this.state.rows = Math.min(range.e.r + 5, CONSTANTS.MAX_ROWS);
+                    this.state.cols = Math.min(range.e.c + 5, CONSTANTS.MAX_COLS);
+                    
+                    for (let row = 0; row <= range.e.r; row++) {
+                        for (let col = 0; col <= range.e.c; col++) {
+                            const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
+                            const cell = firstSheet[cellAddress];
+                            
+                            if (cell) {
+                                if (cell.f) {
+                                    this.state.setCellValue(row, col, '=' + cell.f);
+                                } else if (cell.v !== undefined) {
+                                    this.state.setCellValue(row, col, cell.v);
+                                }
+                            }
+                        }
+                    }
+                    
+                    this.renderSpreadsheet();
+                }
+
+                async loadCSV(arrayBuffer, filename) {
+                    const text = new TextDecoder('utf-8').decode(arrayBuffer);
+                    const lines = text.split('\n').filter(line => line.trim());
+                    
+                    this.state.cellData.clear();
+                    this.state.cellFormats.clear();
+                    this.state.rows = Math.min(lines.length + 5, CONSTANTS.MAX_ROWS);
+                    
+                    let maxCols = 0;
+                    lines.forEach((line, row) => {
+                        const cells = this.parseCSVLine(line);
+                        maxCols = Math.max(maxCols, cells.length);
+                        
+                        cells.forEach((value, col) => {
+                            if (value.trim()) {
+                                this.state.setCellValue(row, col, value.trim());
+                            }
+                        });
+                    });
+                    
+                    this.state.cols = Math.min(maxCols + 5, CONSTANTS.MAX_COLS);
+                    this.renderSpreadsheet();
+                }
+
+                parseCSVLine(line) {
+                    const result = [];
+                    let current = '';
+                    let inQuotes = false;
+                    
+                    for (let i = 0; i < line.length; i++) {
+                        const char = line[i];
+                        
+                        if (char === '"') {
+                            if (inQuotes && line[i + 1] === '"') {
+                                current += '"';
+                                i++;
+                            } else {
+                                inQuotes = !inQuotes;
+                            }
+                        } else if (char === ',' && !inQuotes) {
+                            result.push(current);
+                            current = '';
+                        } else {
+                            current += char;
+                        }
+                    }
+                    
+                    result.push(current);
+                    return result;
+                }
+
+                saveAsExcel() {
+                    try {
+                        const workbook = XLSX.utils.book_new();
+                        const worksheetData = [];
+                        
+                        for (let row = 0; row < this.state.rows; row++) {
+                            const rowData = [];
+                            for (let col = 0; col < this.state.cols; col++) {
+                                const value = this.state.getCellValue(row, col);
+                                rowData.push(value || '');
+                            }
+                            worksheetData.push(rowData);
+                        }
+                        
+                        const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+                        XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+                        
+                        const filename = this.state.currentFileName ? 
+                            this.state.currentFileName.replace(/\.[^/.]+$/, '') + '_edited.xlsx' :
+                            'spreadsheet.xlsx';
+                        
+                        XLSX.writeFile(workbook, filename);
+                        this.showNotification(`${filename} として保存しました`);
+                        this.state.isDirty = false;
+                        
+                    } catch (error) {
+                        console.error('保存エラー:', error);
+                        this.showNotification('保存に失敗しました', 'error');
+                    }
+                }
+
+                saveAsCSV() {
+                    try {
+                        let csvContent = '';
+                        
+                        for (let row = 0; row < this.state.rows; row++) {
+                            const rowData = [];
+                            for (let col = 0; col < this.state.cols; col++) {
+                                let value = this.state.getCellValue(row, col);
+                                
+                                if (typeof value === 'string' && value.startsWith('=')) {
+                                    const cell = this.getCellElement(row, col);
+                                    value = cell ? cell.querySelector('.cell-content').textContent : value;
+                                }
+                                
+                                if (value.toString().includes(',') || value.toString().includes('"') || value.toString().includes('\n')) {
+                                    value = '"' + value.toString().replace(/"/g, '""') + '"';
+                                }
+                                
+                                rowData.push(value);
+                            }
+                            csvContent += rowData.join(',') + '\n';
+                        }
+                        
+                        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                        const link = document.createElement('a');
+                        const url = URL.createObjectURL(blob);
+                        
+                        const filename = this.state.currentFileName ? 
+                            this.state.currentFileName.replace(/\.[^/.]+$/, '') + '_edited.csv' :
+                            'spreadsheet.csv';
+                        
+                        link.href = url;
+                        link.download = filename;
+                        link.click();
+                        
+                        URL.revokeObjectURL(url);
+                        this.showNotification(`${filename} として保存しました`);
+                        this.state.isDirty = false;
+                        
+                    } catch (error) {
+                        console.error('保存エラー:', error);
+                        this.showNotification('保存に失敗しました', 'error');
+                    }
+                }
+
+                updateCellReference(row, col) {
+                    const cellRef = this.getColumnName(col) + (row + 1);
+                    this.elements.cellRef.textContent = cellRef;
+                }
+
+                updateFormulaBar(row, col) {
+                    const value = this.state.getCellValue(row, col);
+                    this.elements.formulaInput.value = value;
+                }
+
+                updateSelectionInfo() {
+                    const count = this.state.selectedCells.size;
+                    if (count === 1 && this.state.currentCell) {
+                        const cellRef = this.getColumnName(this.state.currentCell.col) + (this.state.currentCell.row + 1);
+                        this.elements.selectionInfo.textContent = `${cellRef} 選択中`;
+                    } else if (count > 1) {
+                        this.elements.selectionInfo.textContent = `${count} セル選択中`;
+                        
+                        const values = [];
+                        for (const cellKey of this.state.selectedCells) {
+                            const [row, col] = cellKey.split('-').map(Number);
+                            const value = parseFloat(this.state.getCellValue(row, col));
+                            if (!isNaN(value)) values.push(value);
+                        }
+                        
+                        if (values.length > 0) {
+                            const sum = values.reduce((a, b) => a + b, 0);
+                            const avg = sum / values.length;
+                            document.getElementById('calculationInfo').textContent = 
+                                `合計: ${sum.toFixed(2)} | 平均: ${avg.toFixed(2)} | 個数: ${values.length}`;
+                        } else {
+                            document.getElementById('calculationInfo').textContent = '';
+                        }
+                    }
+                }
+
+                updateFileInfo() {
+                    this.elements.fileInfo.textContent = this.state.currentFileName || '';
+                }
+
+                updateButtonStates() {
+                    this.elements.undoBtn.disabled = this.state.undoStack.length === 0;
+                    this.elements.redoBtn.disabled = this.state.redoStack.length === 0;
+                    this.elements.pasteBtn.disabled = !this.state.clipboard;
+                }
+
+                updateFormatPanelValues(format) {
+                    document.querySelectorAll('.color-option').forEach(opt => opt.classList.remove('selected'));
+                    
+                    if (format.color) {
+                        const colorOpt = document.querySelector(`#textColorPicker .color-option[data-color="${format.color}"]`);
+                        if (colorOpt) colorOpt.classList.add('selected');
+                    }
+                    
+                    if (format.backgroundColor) {
+                        const bgOpt = document.querySelector(`#bgColorPicker .color-option[data-color="${format.backgroundColor}"]`);
+                        if (bgOpt) bgOpt.classList.add('selected');
+                    }
+                    
+                    document.getElementById('boldCheck').checked = format.fontWeight === 'bold';
+                    document.getElementById('italicCheck').checked = format.fontStyle === 'italic';
+                }
+
+                getCellElement(row, col) {
+                    return document.querySelector(`[data-row="${row}"][data-col="${col}"]`);
+                }
+
+                showNotification(message, type = 'success') {
+                    const notification = this.elements.notification;
+                    notification.textContent = message;
+                    notification.className = `notification ${type}`;
+                    notification.classList.add('show');
+                    
+                    setTimeout(() => {
+                        notification.classList.remove('show');
+                    }, CONSTANTS.NOTIFICATION_DURATION);
+                }
+
+                selectAll() {
+                    this.state.selectedCells.clear();
+                    for (let row = 0; row < this.state.rows; row++) {
+                        for (let col = 0; col < this.state.cols; col++) {
+                            this.state.selectedCells.add(this.state.getCellKey(row, col));
+                        }
+                    }
+                    
+                    document.querySelectorAll('.cell').forEach(cell => {
+                        cell.classList.add('selected');
+                    });
+                    
+                    this.updateSelectionInfo();
+                }
+
+                selectRow(row) {
+                    this.clearSelection();
+                    this.state.selectedCells.clear();
+                    
+                    for (let col = 0; col < this.state.cols; col++) {
+                        const cellKey = this.state.getCellKey(row, col);
+                        this.state.selectedCells.add(cellKey);
+                        
+                        const cell = this.getCellElement(row, col);
+                        if (cell) {
+                            cell.classList.add('selected');
+                        }
+                    }
+                    
+                    this.updateSelectionInfo();
+                }
+
+                selectColumn(col) {
+                    this.clearSelection();
+                    this.state.selectedCells.clear();
+                    
+                    for (let row = 0; row < this.state.rows; row++) {
+                        const cellKey = this.state.getCellKey(row, col);
+                        this.state.selectedCells.add(cellKey);
+                        
+                        const cell = this.getCellElement(row, col);
+                        if (cell) {
+                            cell.classList.add('selected');
+                        }
+                    }
+                    
+                    this.updateSelectionInfo();
+                }
+
+                deleteSelectedCells() {
+                    if (this.state.selectedCells.size === 0) return;
+                    
+                    this.saveState();
+                    
+                    for (const cellKey of this.state.selectedCells) {
+                        const [row, col] = cellKey.split('-').map(Number);
+                        this.state.setCellValue(row, col, '');
+                        
+                        const cell = this.getCellElement(row, col);
+                        if (cell) {
+                            const content = cell.querySelector('.cell-content');
+                            const input = cell.querySelector('input');
+                            input.value = '';
+                            content.textContent = '';
+                            cell.classList.remove('formula', 'error');
+                        }
+                    }
+                    
+                    this.showNotification('選択されたセルをクリアしました');
+                }
+
+                adjustLayout() {
+                    const container = document.querySelector('.spreadsheet-container');
+                    const availableHeight = window.innerHeight - container.offsetTop - 40;
+                    container.style.height = `${availableHeight}px`;
+                }
+
+                handleFormulaInput(e) {
+                    // 修正点1: 編集中のセルがある場合のみ値を更新
+                    if (this.state.isEditingCell && this.state.editingCellCoords) {
+                        const { row, col } = this.state.editingCellCoords;
+                        const cell = this.getCellElement(row, col);
+                        if (cell) {
+                            const input = cell.querySelector('input');
+                            if (input) {
+                                input.value = e.target.value;
+                            }
+                        }
+                    }
+                }
+
+                handleFormulaKeydown(e) {
+                    if (e.key === 'Enter' && this.state.currentCell) {
+                        e.preventDefault();
+                        const { row, col } = this.state.currentCell;
+                        
+                        if (this.state.isEditingCell) {
+                            this.exitEditMode(true);
+                        } else {
+                            this.enterEditMode(row, col);
+                        }
+                    }
+                }
+
+                // ================= IndexedDB対応 =================
+                async loadFromIndexedDB() {
+                    try {
+                        this.updateSyncStatus('syncing');
+                        const data = await this.dbManager.load();
+                        
+                        if (data) {
+                            this.state.cellData = data.cellData;
+                            this.state.cellFormats = data.cellFormats;
+                            this.state.rows = data.rows || CONSTANTS.DEFAULT_ROWS;
+                            this.state.cols = data.cols || CONSTANTS.DEFAULT_COLS;
+                            this.renderSpreadsheet();
+                            this.updateAutoSaveInfo('読込完了');
+                            this.updateSyncStatus('synced');
+                        } else {
+                            this.updateAutoSaveInfo('新規作成');
+                            this.updateSyncStatus('synced');
+                        }
+                    } catch (error) {
+                        console.error('IndexedDB読み込みエラー:', error);
+                        this.showNotification('データの読み込みに失敗しました', 'error');
+                        this.updateSyncStatus('error');
+                        
+                        // フォールバック: localStorageから読み込みを試みる
+                        try {
+                            if ('localStorage' in window && localStorage !== null) {
+                                const localData = localStorage.getItem('spreadsheetData');
+                                if (localData) {
+                                    const parsed = JSON.parse(localData);
+                                    this.state.cellData = new Map(parsed.cellData);
+                                    this.state.cellFormats = new Map(parsed.cellFormats);
+                                    this.renderSpreadsheet();
+                                    this.showNotification('バックアップから復元しました', 'warning');
+                                }
+                            }
+                        } catch (e) {
+                            // localStorageが使えない場合は無視
+                            console.warn('バックアップ復元スキップ:', e.message);
+                        }
+                    }
+                }
+
+                async saveToIndexedDB() {
+                    if (!this.state.isDirty) return;
+                    
+                    try {
+                        this.updateSyncStatus('syncing');
+                        
+                        const data = {
+                            cellData: this.state.cellData,
+                            cellFormats: this.state.cellFormats,
+                            rows: this.state.rows,
+                            cols: this.state.cols
+                        };
+                        
+                        await this.dbManager.save(data);
+                        
+                        // バックアップとしてlocalStorageにも保存
+                        try {
+                            if ('localStorage' in window && localStorage !== null) {
+                                const backupData = {
+                                    cellData: Array.from(this.state.cellData.entries()),
+                                    cellFormats: Array.from(this.state.cellFormats.entries())
+                                };
+                                localStorage.setItem('spreadsheetData', JSON.stringify(backupData));
+                            }
+                        } catch (e) {
+                            // localStorageが使えない場合は無視
+                            console.warn('localStorage保存スキップ:', e.message);
+                        }
+                        
+                        this.state.isDirty = false;
+                        this.updateAutoSaveInfo(new Date().toLocaleTimeString());
+                        this.updateSyncStatus('synced');
+                    } catch (error) {
+                        console.error('IndexedDB保存エラー:', error);
+                        this.showNotification('自動保存に失敗しました', 'error');
+                        this.updateSyncStatus('error');
+                    }
+                }
+
+                updateAutoSaveInfo(text) {
+                    if (this.elements && this.elements.autoSaveInfo) {
+                        const infoText = this.elements.autoSaveInfo.querySelector('text') || 
+                                       this.elements.autoSaveInfo.childNodes[0];
+                        if (infoText) {
+                            infoText.textContent = '自動保存: ' + text;
+                        }
+                    }
+                }
+
+                updateSyncStatus(status) {
+                    if (this.elements && this.elements.syncStatus) {
+                        this.elements.syncStatus.className = `sync-status ${status}`;
+                        this.elements.syncStatus.title = {
+                            'synced': '同期完了',
+                            'syncing': '同期中...',
+                            'error': '同期エラー'
+                        }[status] || '';
+                    }
+                }
+
+                // クリーンアップ
+                destroy() {
+                    if (this.autoSaveInterval) {
+                        clearInterval(this.autoSaveInterval);
+                    }
+                    
+                    // 最後の保存
+                    this.saveToIndexedDB().then(() => {
+                        console.log('最終保存完了');
+                    }).catch(error => {
+                        console.error('最終保存エラー:', error);
+                    });
+                }
+            }
+
+            // ユーティリティ関数
+            function debounce(func, delay) {
+                let timeoutId;
+                return function(...args) {
+                    clearTimeout(timeoutId);
+                    timeoutId = setTimeout(() => func.apply(this, args), delay);
+                };
+            }
+
+            // 初期化
+            async function init() {
+                const dbManager = new IndexedDBManager();
+                
+                try {
+                    await dbManager.init();
+                    console.log('IndexedDB初期化成功');
+                } catch (error) {
+                    console.error('IndexedDB初期化エラー:', error);
+                    // IndexedDBが使えない場合でもアプリは動作させる
+                }
+                
+                const state = new AppState();
+                const formulaEngine = new FormulaEngine(state);
+                const uiManager = new UIManager(state, formulaEngine, dbManager);
+                
+                // コンテキストメニューのイベント設定
+                document.querySelectorAll('.context-menu-item').forEach(item => {
+                    item.addEventListener('click', function() {
+                        const action = this.dataset.action;
+                        
+                        switch (action) {
+                            case 'cut': uiManager.cut(); break;
+                            case 'copy': uiManager.copy(); break;
+                            case 'paste': uiManager.paste(); break;
+                            case 'insertRowAbove': 
+                                if (state.currentCell) {
+                                    uiManager.saveState();
+                                    uiManager.showNotification('行を挿入しました');
+                                }
+                                break;
+                            case 'insertRowBelow': 
+                                if (state.currentCell) {
+                                    uiManager.saveState();
+                                    uiManager.showNotification('行を挿入しました');
+                                }
+                                break;
+                            case 'deleteRow': uiManager.deleteRow(); break;
+                            case 'deleteColumn': uiManager.deleteColumn(); break;
+                            case 'clearContents': uiManager.deleteSelectedCells(); break;
+                            case 'clearFormats': uiManager.clearFormats(); break;
+                            case 'clearAll': 
+                                uiManager.deleteSelectedCells();
+                                uiManager.clearFormats();
+                                break;
+                        }
+                        
+                        uiManager.hideContextMenu();
+                    });
+                });
+                
+                uiManager.initSpreadsheet();
+                uiManager.selectCell(0, 0);
+                
+                window.addEventListener('beforeunload', (e) => {
+                    if (state.isDirty) {
+                        e.preventDefault();
+                        e.returnValue = '保存されていない変更があります。ページを離れますか？';
+                    }
+                });
+                
+                // アプリケーション終了時のクリーンアップ
+                window.addEventListener('unload', () => {
+                    uiManager.destroy();
+                    dbManager.close();
+                });
+                
+                window.spreadsheetApp = {
+                    state,
+                    formulaEngine,
+                    uiManager,
+                    dbManager
+                };
+            }
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', init);
+            } else {
+                init();
+            }
+
+            return {
+                init
+            };
+        })();
+    </script>
+</body>
+</html>
